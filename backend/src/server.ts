@@ -2,7 +2,7 @@ import { buildApp } from './app.js';
 import { config } from './config.js';
 import { loadRuns } from './runs/store.js';
 
-const app = await buildApp();
+const app = await buildApp({ staticDir: config.frontendDir });
 
 try {
   app.log.info(`Loaded ${await loadRuns()} saved run(s) from ${config.reportsDir}`);

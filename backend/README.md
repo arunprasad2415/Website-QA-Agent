@@ -1,6 +1,8 @@
 # Website QA Agent: Backend
 
-An autonomous QA tester for websites. Give it a URL and a goal ("test the signup flow"). An AI model (Claude or ChatGPT) drives a real Chromium browser through Playwright: it reads screenshots, clicks, types, and navigates toward the goal. Automatic checks catch console errors, failed requests, broken links and accessibility problems along the way. Each run ends with a Markdown bug report with screenshots and steps to reproduce.
+An autonomous QA tester for websites. Give it a URL and a goal ("test the signup flow"). An AI model (Claude, ChatGPT or any OpenAI-compatible API) drives a real Chromium browser through Playwright: it reads screenshots, clicks, types, and navigates toward the goal. Automatic checks catch console errors, failed requests, broken links and accessibility problems along the way. Each run ends with a Markdown bug report with screenshots and steps to reproduce.
+
+The backend also serves the built [frontend](../frontend) in production, so one server runs the whole app. See the [project README](../README.md) for the overview.
 
 **Stack:** Node.js 22, TypeScript, Fastify, Playwright, Anthropic SDK, OpenAI SDK
 
@@ -23,8 +25,12 @@ URL + goal → │ observe: screenshot + numbered clickable elements            
 npm install
 npx playwright install chromium
 cp .env.example .env      # Windows: copy .env.example .env
-npm run dev               # http://localhost:4000
+npm run dev               # API on http://localhost:4000
 ```
+
+**Try it without an API key:** `npm run demo` starts the server with a scripted AI and a small buggy demo shop at `http://127.0.0.1:4100`. Build the frontend first (`npm run build` in `../frontend`) to use the UI at `http://localhost:4000`.
+
+**Production:** `npm run build && npm start` serves the API and, if `../frontend/dist` exists, the frontend too.
 
 ## AI providers: server key or BYOK
 
@@ -33,8 +39,10 @@ npm run dev               # http://localhost:4000
 | Claude (server key) | Set `ANTHROPIC_API_KEY` in `.env` |
 | ChatGPT (server key) | Set `OPENAI_API_KEY` and `OPENAI_DEFAULT_MODEL` (a model that supports images and function calling) in `.env` |
 | BYOK (bring your own key) | Send `"apiKey"` with `POST /api/runs` |
+| Custom (OpenAI-compatible) | `"provider": "custom"` with `"apiKey"`, `"baseUrl"` and `"model"`. Works with OpenRouter, Groq, Together, Google Gemini, Mistral or a self-hosted server. The model must accept images and tool calls. |
 
 The key is chosen in this order: the request's `apiKey`, then the server key for that provider. If neither exists, the request gets a `400`.
+**Custom base URLs go through the same private-address guard as test URLs, and redirects are refused**, so the server can't be pointed at its own network. To use a model on your own machine (for example Ollama on `localhost`), set `ALLOW_PRIVATE_URLS=true`.
 **BYOK keys are kept in memory only for that run. They are never saved to disk, written to reports, returned by the API or logged.** Tests verify this.
 
 Claude requests use Anthropic's server-side refusal fallback (`fallbacks: "default"`): if Claude's safety classifier declines a step, the API retries it on Anthropic's recommended fallback model.
@@ -45,14 +53,15 @@ Claude requests use Anthropic's server-side refusal fallback (`fallbacks: "defau
 |---|---|---|
 | `PORT` | `4000` | HTTP port |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | none | Optional server keys |
-| `DEFAULT_PROVIDER` | `claude` | `claude` or `openai` |
+| `DEFAULT_PROVIDER` | `claude` | `claude`, `openai` or `custom` |
 | `CLAUDE_DEFAULT_MODEL` | `claude-opus-5-5` | Overridable per run with `"model"` |
 | `OPENAI_DEFAULT_MODEL` | none | Required for ChatGPT unless sent per run |
 | `MAX_CONCURRENT_RUNS` | `2` | Each run is a full browser. More runs get a `429`. |
 | `RUN_TIMEOUT_MS` | `300000` | Hard time limit per run |
 | `ALLOW_PRIVATE_URLS` | `false` | `true` only for testing your own `localhost` sites |
 | `HEADLESS` | `true` | `false` shows the browser window, useful for demos |
-| `REPORTS_DIR` | `./reports` | Where runs are stored |
+| `REPORTS_DIR` | `./reports` | Where runs are stored (`./reports-demo` in demo mode) |
+| `FRONTEND_DIR` | `../frontend/dist` | Built frontend to serve; skipped if missing |
 
 ## API
 
@@ -60,7 +69,7 @@ Claude requests use Anthropic's server-side refusal fallback (`fallbacks: "defau
 |---|---|---|
 | GET | `/api/health` | Health check |
 | GET | `/api/providers` | Providers, whether a server key is set, default models (never the keys) |
-| POST | `/api/keys/validate` | `{provider, apiKey}` → `{valid}`. Uses no tokens. |
+| POST | `/api/keys/validate` | `{provider, apiKey, baseUrl?}` → `{valid}`. Uses no tokens. |
 | POST | `/api/runs` | Start a run → `202 {runId}` |
 | GET | `/api/runs` | Past runs, newest first (summary only) |
 | GET | `/api/runs/:id` | Full run: steps, bugs, status, summary |
@@ -81,7 +90,7 @@ curl -N http://localhost:4000/api/runs/6f1c.../events     # watch live
 curl http://localhost:4000/api/runs/6f1c.../report        # Markdown report
 ```
 
-`POST /api/runs` body: `url` and `goal` are required. `provider` (`claude` | `openai`), `model`, `apiKey` (BYOK) and `maxSteps` (1–50, default 25) are optional.
+`POST /api/runs` body: `url` and `goal` are required. `provider` (`claude` | `openai` | `custom`), `model`, `apiKey` (BYOK), `baseUrl` (required for `custom`) and `maxSteps` (1-50, default 25) are optional.
 
 Try a provider without the server: `npx tsx src/scripts/try-provider.ts claude https://example.com "Find the main link"`
 
@@ -104,17 +113,19 @@ Try a provider without the server: `npx tsx src/scripts/try-provider.ts claude h
 - **Report escaping:** text from websites and the AI is escaped in reports, so it can't inject HTML, tracking images or break the layout.
 - **Path safety:** screenshot file names are strictly validated, so nothing like `../run.json` can be read.
 - **Input validation:** JSON schemas on every route, plus limits on steps, run time and concurrent runs.
+- **Static files:** the frontend is served by `@fastify/static`, which blocks `../` path traversal. Unknown `/api/*` routes return JSON 404s instead of the app.
 
 **Known limits:** DNS rebinding could in theory get past the per-request DNS check, and WebSockets aren't routed through the guard. For a public deployment, also run the server behind an egress firewall that blocks private ranges.
 
 ## Tests
 
 ```bash
-npm test          # 18 tests: browser, agent loop, API, reports, SSRF guard
+npm test          # 21 tests: browser, agent loop, API, providers, reports, SSRF guard
+npm run test:e2e  # 3 browser tests of the full app (build the frontend first)
 npm run typecheck
 ```
 
-The tests use a local buggy test site and a scripted fake AI, so **they need no API key and make no paid calls**.
+The tests use a local buggy test site and a scripted fake AI, so **they need no API key and make no paid calls**. The end-to-end tests start the real server with the built frontend and drive it in Chromium: start a run, watch it live, inspect bugs, download the report, stop a run.
 
 ## Project structure
 
@@ -129,10 +140,12 @@ src/
 ├── browser/
 │   ├── session.ts          # Playwright wrapper
 │   └── url-guard.ts        # SSRF protection
-├── providers/              # Claude + OpenAI behind one interface, BYOK key resolution
+├── providers/              # Claude, OpenAI and custom APIs behind one interface, BYOK
 ├── routes/                 # /api/providers, /api/runs
 ├── runs/store.ts           # Run state, live events, JSON persistence
-└── report/markdown.ts      # Bug report
+├── report/markdown.ts      # Bug report
+├── demo/                   # Demo shop + scripted AI, `npm run demo`
+└── e2e/                    # End-to-end browser tests
 ```
 
 ## Limitations / next steps
@@ -141,3 +154,4 @@ src/
 - Runs are kept in memory plus JSON files. Move to SQLite when history grows or you run more than one server.
 - No user accounts: BYOK covers per-user billing.
 - No login handling for sites behind authentication.
+- Text the AI types into password fields appears in the step log and report. Don't put real credentials in a test goal.

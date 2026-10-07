@@ -38,4 +38,5 @@ export const config = {
   allowPrivateUrls: process.env.ALLOW_PRIVATE_URLS === 'true',
   headless: process.env.HEADLESS !== 'false',
   reportsDir: resolve(process.env.REPORTS_DIR || 'reports'),
+  frontendDir: resolve(process.env.FRONTEND_DIR || '../frontend/dist'),
 };

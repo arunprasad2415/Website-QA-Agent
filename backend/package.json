@@ -8,13 +8,17 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "demo": "tsx src/demo/demo-server.ts",
+    "test:e2e": "tsx --test src/e2e/app.e2e.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@fastify/static": "^10.1.5",
     "fastify": "^5.12.5",
     "openai": "^7.30.0",
-    "playwright": "^1.63.0"
+    "playwright": "^1.63.0",
+    "website-qa-agent": "file:.."
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
