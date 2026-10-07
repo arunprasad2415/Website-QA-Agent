@@ -4,7 +4,7 @@ try {
   process.loadEnvFile();
 } catch {}
 
-export const PROVIDERS = ['claude', 'openai'] as const;
+export const PROVIDERS = ['claude', 'openai', 'custom'] as const;
 export type ProviderName = (typeof PROVIDERS)[number];
 
 function positiveInt(name: string, fallback: number): number {
@@ -26,10 +26,12 @@ export const config = {
   serverKeys: {
     claude: process.env.ANTHROPIC_API_KEY || undefined,
     openai: process.env.OPENAI_API_KEY || undefined,
+    custom: undefined,
   } satisfies Record<ProviderName, string | undefined>,
   defaultModels: {
     claude: process.env.CLAUDE_DEFAULT_MODEL || 'claude-opus-5-5',
     openai: process.env.OPENAI_DEFAULT_MODEL || undefined,
+    custom: undefined,
   } satisfies Record<ProviderName, string | undefined>,
   maxConcurrentRuns: positiveInt('MAX_CONCURRENT_RUNS', 2),
   runTimeoutMs: positiveInt('RUN_TIMEOUT_MS', 300_000),

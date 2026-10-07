@@ -28,6 +28,7 @@ await once(site, 'listening');
 const siteUrl = `http://127.0.0.1:${(site.address() as AddressInfo).port}/`;
 
 const keysSeen: (string | undefined)[] = [];
+const baseUrlsSeen: (string | undefined)[] = [];
 let quickTurn = 0;
 const quick: LLMProvider = {
   name: 'claude',
@@ -46,6 +47,7 @@ const app = await buildApp({
   logger: false,
   createProvider: (req: ProviderRequest) => {
     keysSeen.push(req.apiKey);
+    baseUrlsSeen.push(req.baseUrl);
     return req.model === 'slow' ? slow : quick;
   },
 });
@@ -127,6 +129,33 @@ test('rejects private addresses when ALLOW_PRIVATE_URLS is off', async () => {
   } finally {
     config.allowPrivateUrls = true;
   }
+});
+
+test('custom provider: base URL is required, guarded, and passed through', async () => {
+  const custom = { provider: 'custom', apiKey: 'k', model: 'm' };
+  assert.match((await start(custom)).json().message, /needs a "baseUrl"/);
+
+  config.allowPrivateUrls = false;
+  try {
+    const blocked = await start({ ...custom, url: 'https://8.8.8.8/', baseUrl: 'http://127.0.0.1:11434/v1' });
+    assert.equal(blocked.statusCode, 400);
+    assert.match(blocked.json().message, /Invalid base URL: Blocked/);
+
+    const check = await app.inject({
+      method: 'POST',
+      url: '/api/keys/validate',
+      payload: { provider: 'custom', apiKey: 'k', baseUrl: 'http://10.0.0.5/v1' },
+    });
+    assert.equal(check.statusCode, 400);
+    assert.match(check.json().message, /Invalid base URL: Blocked/);
+  } finally {
+    config.allowPrivateUrls = true;
+  }
+
+  const ok = await start({ ...custom, baseUrl: 'https://llm.example.com/v1' });
+  assert.equal(ok.statusCode, 202);
+  assert.equal(baseUrlsSeen.at(-1), 'https://llm.example.com/v1');
+  await app.inject({ url: `/api/runs/${ok.json().runId}/events` });
 });
 
 test('cancel, and the concurrent-run limit', async () => {

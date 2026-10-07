@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { runAgent } from '../agent/loop.js';
 import { assertAllowedUrl } from '../browser/url-guard.js';
 import { config, PROVIDERS, type ProviderName } from '../config.js';
-import { httpError, type ProviderRequest } from '../providers/index.js';
+import { assertBaseUrl, httpError, type ProviderRequest } from '../providers/index.js';
 import type { LLMProvider } from '../providers/types.js';
 import { buildReport } from '../report/markdown.js';
 import { activeRunCount, finishRun, getLiveRun, getRun, listRuns, recordEvent, runDir, startRun } from '../runs/store.js';
@@ -19,6 +19,7 @@ interface StartBody {
   provider?: ProviderName;
   model?: string;
   apiKey?: string;
+  baseUrl?: string;
   maxSteps?: number;
 }
 
@@ -41,23 +42,25 @@ export async function runRoutes(app: FastifyInstance, opts: RunRoutesOptions) {
             provider: { type: 'string', enum: [...PROVIDERS] },
             model: { type: 'string', minLength: 1, maxLength: 100 },
             apiKey: { type: 'string', minLength: 1, maxLength: 500 },
+            baseUrl: { type: 'string', minLength: 1, maxLength: 500 },
             maxSteps: { type: 'integer', minimum: 1, maximum: MAX_STEPS_LIMIT },
           },
         },
       },
     },
     async (req, reply) => {
-      const { url, goal, provider = config.defaultProvider, model, apiKey, maxSteps = DEFAULT_MAX_STEPS } = req.body;
+      const { url, goal, provider = config.defaultProvider, model, apiKey, baseUrl, maxSteps = DEFAULT_MAX_STEPS } = req.body;
       try {
         await assertAllowedUrl(url);
       } catch (err) {
         throw httpError(400, `Invalid url: ${(err as Error).message}`);
       }
+      await assertBaseUrl(provider, baseUrl);
       if (activeRunCount() >= config.maxConcurrentRuns) {
         throw httpError(429, `Too many runs in progress (max ${config.maxConcurrentRuns}), try again shortly`);
       }
 
-      const llm = opts.createProvider({ provider, model, apiKey });
+      const llm = opts.createProvider({ provider, model, apiKey, baseUrl });
       const run = startRun({ url, goal, provider, model: llm.model, maxSteps });
 
       void runAgent({
